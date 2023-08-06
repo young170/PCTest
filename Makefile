@@ -1,6 +1,7 @@
 CC = gcc
+CFLAGS = -Wall
 EXE = pctest
-INCDIR = ./include
+INCLS = ./include
 # file-specific
 SRC1 = $(EXE).c
 OBJ1 = $(EXE).o
@@ -9,10 +10,10 @@ MISC = solution target
 
 # rules
 $(EXE): $(OBJ1)
-	$(CC) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^
 
 $(OBJ1): $(SRC1)
-	$(CC) -o $@ -c $< -I$(INCDIR)
+	$(CC) $(CFLAGS) -o $@ -c $< -I$(INCLS)
 
 # Phony Targets
 .PHONY: run clean

@@ -40,10 +40,100 @@ int main (int argc, char *argv[]) {
     char *solution_filename = argv[optind];
     char *target_filename = argv[optind + 1];
 
-    char *solution_output = build_file(solution_filename);
-    char *target_output = build_file(target_filename);
+    char *solution_output_filename = build_file(solution_filename);
+    char *target_output_filename = build_file(target_filename);
+
+    int result = execute_programs(testdir, solution_output_filename, target_output_filename);
     
     return 0;
+}
+
+int execute_programs(DIR *dir, char *solution_exe_file, char *target_exe_file) {
+    struct dirent *entry;
+    
+    while ((entry = readdir(dir)) != NULL) {
+        char *file_contents = read_file_contents(entry->d_name);
+
+        char *solution_result = run_program(solution_exe_file, file_contents);
+        char *target_result = run_program(target_exe_file, file_contents);
+
+        if (strcmp(solution_result, target_result) != 0) {
+            // different to the solution
+        }
+
+        free(solution_result);
+        free(target_result);
+    }
+}
+
+char *run_program (char *exe_file, char *input) {
+    char *buf;
+    pid_t pid = fork();
+
+    int test_input_pipe[2];
+    int runtime_pipe[2];
+
+    if (pipe(test_input_pipe) == 0) {
+        fprintf(stderr, "pipe failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pipe(runtime_pipe) == 0) {
+        fprintf(stderr, "pipe failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid < 0) {
+        fprintf(stderr, "fork failed\n");
+        exit(EXIT_FAILURE);
+    } else if (pid == 0) {
+        close(runtime_pipe[0]);
+        dup2(runtime_pipe[1], STDERR_FILENO);
+
+        if (execv(exe_file, NULL) == -1) {
+            fprintf(stderr, "execv failed\n");
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        close(runtime_pipe[1]);
+        dup2(runtime_pipe[0], STDOUT_FILENO);
+
+        wait(0x0);
+
+        buf = (char *) malloc(sizeof(char) * BUFSIZ);
+        read(runtime_pipe[0], buf, BUFSIZ);
+    }
+
+    return buf;
+}
+
+char *read_file_contents(char *filename) {
+    FILE *fp = fopen(filename, "r");
+
+    if (fp == NULL) {
+        fprintf(stderr, "invalid file\n");
+        exit(EXIT_FAILURE);
+    }
+
+    fseek(fp, 0L, SEEK_END);
+    long buf_size = ftell(fp);
+    char *buf = (char *) malloc(sizeof(char) * buf_size);
+
+    rewind(fp);
+
+    int used = 0;
+    int n = 0;
+    while (1) {
+        n = fread(buf + used, sizeof(char), buf_size, fp);
+
+        if (n == 0) {
+            break;
+        }
+
+        used += n;
+    }
+
+    return buf;
 }
 
 char *build_file (char *filename) {

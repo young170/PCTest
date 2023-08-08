@@ -45,6 +45,9 @@ int main (int argc, char *argv[]) {
 
     int result = execute_programs(testdir, solution_output_filename, target_output_filename);
     
+    free(solution_output_filename);
+    free(target_output_filename);
+
     if (result == 1) {
         printf("WRONG\n");
     } else {
@@ -82,14 +85,24 @@ int execute_programs(char *dirpath, char *solution_exe_file, char *target_exe_fi
 
             char *solution_result = run_program(solution_exe_file, file_contents);
             char *target_result = run_program(target_exe_file, file_contents);
+
+            free(file_contents);
             
+            // different to the solution
             if (strcmp(solution_result, target_result) != 0) {
-                // different to the solution
+                /*
+                    increment the number of failed text executions
+                */
+
                 free(solution_result);
                 free(target_result);
 
                 return 1;
             }
+
+            /*
+                increment the number of correct text executions
+            */
 
             free(solution_result);
             free(target_result);
@@ -129,7 +142,7 @@ char *run_program (char *exe_file, char *input) {
         close(test_input_pipe[1]);
         dup2(test_input_pipe[0], STDIN_FILENO);
 
-        execv(exe_file, NULL);
+        execl(exe_file, exe_file, (char *) NULL);
 
         fprintf(stderr, "execv failed\n");
         exit(EXIT_FAILURE);
@@ -210,6 +223,8 @@ char *build_file (char *filename) {
         exit(EXIT_FAILURE);
     }
 
+    free(compile_result);
+
     return output_filename;
 }
 
@@ -270,6 +285,9 @@ char *compile (char *source_filename, char *output_filename) {
 
         if (execvp("gcc", argv) == -1) {
             fprintf(stderr, "compilation failed\n");
+            /*
+                instead of ending, notify compilation error
+            */
             exit(EXIT_FAILURE);
         }
     } else {

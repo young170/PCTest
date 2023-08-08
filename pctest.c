@@ -139,7 +139,13 @@ char *run_program (char *exe_file, char *input) {
 
         write(test_input_pipe[1], input, strlen(input));
 
-        waitpid(pid, NULL, 0);
+        int status;
+        waitpid(pid, &status, 0);
+
+        if (!WIFEXITED(status)) {
+            fprintf(stderr, "runtime error\n");
+            exit(EXIT_FAILURE);
+        }
 
         buf = (char *) malloc(sizeof(char) * BUFSIZ);
         int buf_len = read(runtime_pipe[0], buf, BUFSIZ);

@@ -86,6 +86,9 @@ int execute_programs(char *dirpath, char *solution_exe_file, char *target_exe_fi
             char *solution_result = run_program(solution_exe_file, file_contents);
             char *target_result = run_program(target_exe_file, file_contents);
 
+            printf("solution:\n%s\n", solution_result);
+            printf("target:\n%s\n", target_result);
+
             free(file_contents);
             
             // different to the solution
@@ -136,12 +139,26 @@ char *run_program (char *exe_file, char *input) {
         fprintf(stderr, "fork failed\n");
         exit(EXIT_FAILURE);
     } else if (pid == 0) {
+        struct rlimit rl;
+
+        rl.rlim_cur = 3;
+        rl.rlim_max = 3;
+
+        if (setrlimit(RLIMIT_NOFILE, &rl) != 0) {
+            printf("setrlimit() failed with errno=%d\n", errno);
+            exit(1);
+        }
+
+        printf("The soft limit is %llu\n", rl.rlim_cur);
+        printf("The hard limit is %llu\n", rl.rlim_max);
+
         close(runtime_pipe[0]);
         dup2(runtime_pipe[1], STDOUT_FILENO);
 
         close(test_input_pipe[1]);
         dup2(test_input_pipe[0], STDIN_FILENO);
 
+        close(STDERR_FILENO); // close a file descriptor
         execl(exe_file, exe_file, (char *) NULL);
 
         fprintf(stderr, "execv failed\n");
@@ -155,8 +172,11 @@ char *run_program (char *exe_file, char *input) {
         int status;
         waitpid(pid, &status, 0);
 
-        if (!WIFEXITED(status)) {
-            fprintf(stderr, "runtime error\n");
+        if (!WIFEXITED(status)) { // if not terminated normally
+            fprintf(stderr, "child exited error\n");
+            exit(EXIT_FAILURE);
+        } else if (WIFSTOPPED(status)) {
+            fprintf(stderr, "child stopped error\n");
             exit(EXIT_FAILURE);
         }
 

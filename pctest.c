@@ -43,8 +43,27 @@ int main (int argc, char *argv[]) {
     char *solution_output_filename = build_file(solution_filename);
     char *target_output_filename = build_file(target_filename);
 
-    int result = execute_programs(testdir, solution_output_filename, target_output_filename);
+    // summary necessary data
+    struct timespec **timings = (struct timespec **) malloc(sizeof(struct timespec *));
+    int correct_cnt = 0;
+    int failed_cnt = 0;
     
+    int result = execute_programs(testdir, solution_output_filename, target_output_filename, timings, &correct_cnt, &failed_cnt);
+
+    int max_idx = max_exe_time(timings);
+    int min_idx = min_exe_time(timings);
+    struct timespec sum_timer = sum_exe_time(timings);
+
+    printf("summary: %d, %d: %d, %d, %ld\n", correct_cnt, failed_cnt, max_idx, min_idx, sum_timer.tv_sec);
+
+    int i = 0;
+    while (timings[i] != NULL) {
+        free(timings[i]);
+        i++;
+    }
+
+    free(timings);
+
     free(solution_output_filename);
     free(target_output_filename);
 
@@ -57,7 +76,71 @@ int main (int argc, char *argv[]) {
     return 0;
 }
 
-int execute_programs(char *dirpath, char *solution_exe_file, char *target_exe_file) {
+int max_exe_time (struct timespec **timings) {
+    int i = 0;
+    int max_idx = -1;
+    time_t max_sec = -1;
+    long max_nsec = -1;
+
+    while (timings[i] != NULL) {
+        if ((max_sec <= timings[i]->tv_sec) || max_idx == -1) {
+            if ((max_sec == timings[i]->tv_sec) && (timings[0]->tv_nsec < max_nsec)) {
+                i++;
+                continue;
+            }
+
+            max_sec = timings[i]->tv_sec;
+            max_nsec = timings[i]->tv_nsec;
+            max_idx = i;
+        }
+
+        i++;
+    }
+
+    return max_idx;
+}
+
+int min_exe_time (struct timespec **timings) {
+    int i = 0;
+    int min_idx = -1;
+    time_t min_sec = -1;
+    long min_nsec = -1;
+
+    while (timings[i] != NULL) {
+        if ((timings[i]->tv_sec <= min_sec) || min_idx == -1) {
+            if ((min_sec == timings[i]->tv_sec) && (min_nsec < timings[0]->tv_nsec)) {
+                i++;
+                continue;
+            }
+
+            min_sec = timings[i]->tv_sec;
+            min_nsec = timings[i]->tv_nsec;
+            min_idx = i;
+        }
+
+        i++;
+    }
+
+    return min_idx;
+}
+
+struct timespec sum_exe_time (struct timespec **timings) {
+    int i = 0;
+    time_t sum_sec = 0;
+    long sum_nsec = 0;
+
+    while (timings[i] != NULL) {
+        sum_sec += timings[i]->tv_sec;
+        sum_nsec += timings[i]->tv_nsec;
+
+        i++;
+    }
+
+    struct timespec sum_time = {sum_sec, sum_nsec};
+    return sum_time;
+}
+
+int execute_programs (char *dirpath, char *solution_exe_file, char *target_exe_file, struct timespec **timings, int *correct_cnt, int *failed_cnt) {
     DIR *dir = opendir(dirpath);
 
     if (dir == NULL) {
@@ -67,6 +150,8 @@ int execute_programs(char *dirpath, char *solution_exe_file, char *target_exe_fi
 
     struct dirent *entry;
     struct stat st;
+
+    int i = 0;
     
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
@@ -83,29 +168,36 @@ int execute_programs(char *dirpath, char *solution_exe_file, char *target_exe_fi
 
             char *file_contents = read_file_contents(filepath);
 
-            char *solution_result = run_program(solution_exe_file, file_contents);
-            char *target_result = run_program(target_exe_file, file_contents);
+            struct timespec **tmp = (struct timespec **) realloc(timings, (i + 1) * sizeof(struct timespec *));
+            timings = tmp;
+            
+            timings[i] = (struct timespec *) malloc(sizeof(struct timespec));
 
-            printf("solution:\n%s\n", solution_result);
-            printf("target:\n%s\n", target_result);
+            if (clock_gettime(CLOCK_REALTIME, timings[i]) == -1) {
+                fprintf(stderr, "clock_gettime() failed\n");
+                exit(EXIT_FAILURE);
+            }
+
+                char *target_result = run_program(target_exe_file, file_contents);
+
+            timings[i] = time_execution(timings[i]);
+
+            char *solution_result = run_program(solution_exe_file, file_contents);
 
             free(file_contents);
             
             // different to the solution
             if (strcmp(solution_result, target_result) != 0) {
-                /*
-                    increment the number of failed text executions
-                */
+                (*failed_cnt)++;
 
                 free(solution_result);
                 free(target_result);
 
                 return 1;
             }
-
-            /*
-                increment the number of correct text executions
-            */
+            
+            (*correct_cnt)++;
+            i++;
 
             free(solution_result);
             free(target_result);
@@ -115,6 +207,36 @@ int execute_programs(char *dirpath, char *solution_exe_file, char *target_exe_fi
     }
 
     return 0;
+}
+
+char *read_file_contents (char *filename) {
+    FILE *fp = fopen(filename, "r");
+
+    if (fp == NULL) {
+        fprintf(stderr, "invalid file\n");
+        exit(EXIT_FAILURE);
+    }
+
+    fseek(fp, 0L, SEEK_END);
+    long buf_size = ftell(fp);
+    char *buf = (char *) malloc(sizeof(char) * (buf_size + 1));
+
+    rewind(fp);
+
+    int used = 0;
+    int n = 0;
+    while (1) {
+        n = fread(buf + used, sizeof(char), buf_size, fp);
+
+        if (n == 0) {
+            break;
+        }
+
+        used += n;
+    }
+
+    buf[buf_size] = '\0';
+    return buf;
 }
 
 char *run_program (char *exe_file, char *input) {
@@ -145,12 +267,9 @@ char *run_program (char *exe_file, char *input) {
         rl.rlim_max = 3;
 
         if (setrlimit(RLIMIT_NOFILE, &rl) != 0) {
-            printf("setrlimit() failed with errno=%d\n", errno);
-            exit(1);
+            fprintf(stderr, "setrlimit() failed with errno=%d\n", errno);
+            exit(EXIT_FAILURE);
         }
-
-        printf("The soft limit is %llu\n", rl.rlim_cur);
-        printf("The hard limit is %llu\n", rl.rlim_max);
 
         close(runtime_pipe[0]);
         dup2(runtime_pipe[1], STDOUT_FILENO);
@@ -159,14 +278,15 @@ char *run_program (char *exe_file, char *input) {
         dup2(test_input_pipe[0], STDIN_FILENO);
 
         close(STDERR_FILENO); // close a file descriptor
+
         execl(exe_file, exe_file, (char *) NULL);
 
         fprintf(stderr, "execv failed\n");
         exit(EXIT_FAILURE);
     } else {
         close(runtime_pipe[1]);
-        close(test_input_pipe[0]);
 
+        close(test_input_pipe[0]);
         write(test_input_pipe[1], input, strlen(input));
 
         int status;
@@ -191,34 +311,18 @@ char *run_program (char *exe_file, char *input) {
     return buf;
 }
 
-char *read_file_contents(char *filename) {
-    FILE *fp = fopen(filename, "r");
+struct timespec *time_execution (struct timespec *timer) {
+    struct timespec *tmp = (struct timespec *) malloc(sizeof(struct timespec));
 
-    if (fp == NULL) {
-        fprintf(stderr, "invalid file\n");
-        exit(EXIT_FAILURE);
+    if (clock_gettime(CLOCK_REALTIME, tmp) == -1) {
+        fprintf(stderr, "clock_gettime() failed\n");
+        return NULL;
     }
 
-    fseek(fp, 0L, SEEK_END);
-    long buf_size = ftell(fp);
-    char *buf = (char *) malloc(sizeof(char) * (buf_size + 1));
+    timer->tv_sec = tmp->tv_sec - timer->tv_sec;
+    timer->tv_nsec = tmp->tv_nsec - timer->tv_nsec;
 
-    rewind(fp);
-
-    int used = 0;
-    int n = 0;
-    while (1) {
-        n = fread(buf + used, sizeof(char), buf_size, fp);
-
-        if (n == 0) {
-            break;
-        }
-
-        used += n;
-    }
-
-    buf[buf_size] = '\0';
-    return buf;
+    return timer;
 }
 
 char *build_file (char *filename) {
@@ -260,7 +364,7 @@ int check_file (char *filename) {
     return 0;
 }
 
-char *remove_file_ext(char *org) {
+char *remove_file_ext (char *org) {
     int concat_pos = 0;
 
     while (org[concat_pos] != '\0') {

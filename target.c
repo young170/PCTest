@@ -17,11 +17,11 @@ int main (void) {
     // printf("%s\n", str);
 
     // timer
-    sleep(2);
+    // sleep(1);
 
     // open new file descriptor
-    // FILE *fp = fopen("foo.txt", "w");
-    // int fd = fileno(fp);
+    FILE *fp = fopen("foo.txt", "w");
+    int fd = fileno(fp);
     // printf("fileno: %d\n", fd);
 
     // remove file

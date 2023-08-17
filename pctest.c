@@ -1,6 +1,70 @@
 #include "pctest.h"
 
 
+int max_exe_time (struct timespec **timings) {
+    int i = 0;
+    int max_idx = -1;
+    time_t max_sec = -1;
+    long max_nsec = -1;
+
+    while (timings[i] != NULL) {
+        if ((max_sec <= timings[i]->tv_sec) || max_idx == -1) {
+            if ((max_sec == timings[i]->tv_sec) && (timings[0]->tv_nsec < max_nsec)) {
+                i++;
+                continue;
+            }
+
+            max_sec = timings[i]->tv_sec;
+            max_nsec = timings[i]->tv_nsec;
+            max_idx = i;
+        }
+
+        i++;
+    }
+
+    return max_idx;
+}
+
+int min_exe_time (struct timespec **timings) {
+    int i = 0;
+    int min_idx = -1;
+    time_t min_sec = -1;
+    long min_nsec = -1;
+
+    while (timings[i] != NULL) {
+        if ((timings[i]->tv_sec <= min_sec) || min_idx == -1) {
+            if ((min_sec == timings[i]->tv_sec) && (min_nsec < timings[0]->tv_nsec)) {
+                i++;
+                continue;
+            }
+
+            min_sec = timings[i]->tv_sec;
+            min_nsec = timings[i]->tv_nsec;
+            min_idx = i;
+        }
+
+        i++;
+    }
+
+    return min_idx;
+}
+
+struct timespec sum_exe_time (struct timespec **timings) {
+    int i = 0;
+    time_t sum_sec = 0;
+    long sum_nsec = 0;
+
+    while (timings[i] != NULL) {
+        sum_sec += timings[i]->tv_sec;
+        sum_nsec += timings[i]->tv_nsec;
+
+        i++;
+    }
+
+    struct timespec sum_time = {sum_sec, sum_nsec};
+    return sum_time;
+}
+
 int main (int argc, char *argv[]) {
     int opt;
     int timeout;
@@ -48,7 +112,7 @@ int main (int argc, char *argv[]) {
     int correct_cnt = 0;
     int failed_cnt = 0;
     
-    int result = execute_programs(testdir, solution_output_filename, target_output_filename, timings, &correct_cnt, &failed_cnt);
+    int result = execute_programs(testdir, solution_output_filename, target_output_filename, timings, &correct_cnt, &failed_cnt, timeout);
 
     int max_idx = max_exe_time(timings);
     int min_idx = min_exe_time(timings);
@@ -66,12 +130,6 @@ int main (int argc, char *argv[]) {
 
     free(solution_output_filename);
     free(target_output_filename);
-
-    if (result == 1) {
-        printf("WRONG\n");
-    } else {
-        printf("CORRECT\n");
-    }
 
     return 0;
 }
@@ -140,7 +198,7 @@ struct timespec sum_exe_time (struct timespec **timings) {
     return sum_time;
 }
 
-int execute_programs (char *dirpath, char *solution_exe_file, char *target_exe_file, struct timespec **timings, int *correct_cnt, int *failed_cnt) {
+int execute_programs (char *dirpath, char *solution_exe_file, char *target_exe_file, struct timespec **timings, int *correct_cnt, int *failed_cnt, int timeout) {
     DIR *dir = opendir(dirpath);
 
     if (dir == NULL) {
@@ -178,29 +236,28 @@ int execute_programs (char *dirpath, char *solution_exe_file, char *target_exe_f
                 exit(EXIT_FAILURE);
             }
 
-                char *target_result = run_program(target_exe_file, file_contents);
+                int exe_result = run_program(solution_exe_file, target_exe_file, file_contents, timeout);
 
             timings[i] = time_execution(timings[i]);
 
-            char *solution_result = run_program(solution_exe_file, file_contents);
-
-            free(file_contents);
-            
-            // different to the solution
-            if (strcmp(solution_result, target_result) != 0) {
+            if (exe_result != 0) {
                 (*failed_cnt)++;
-
-                free(solution_result);
-                free(target_result);
-
-                return 1;
+            } else {
+                (*correct_cnt)++;
             }
-            
-            (*correct_cnt)++;
-            i++;
 
-            free(solution_result);
-            free(target_result);
+            if (exe_result == 0) {
+                printf("CORRECT\n");
+            } else if (exe_result == 1) {
+                printf("INCORRECT\n");
+            } else if (exe_result == 2) {
+                printf("RUNTIME ERROR\n");
+            } else if (exe_result == 3) {
+                printf("TIMEOUT\n");
+            }
+        
+            i++;
+            free(file_contents);
         }
 
         free(filepath);
@@ -209,7 +266,128 @@ int execute_programs (char *dirpath, char *solution_exe_file, char *target_exe_f
     return 0;
 }
 
-char *read_file_contents (char *filename) {
+int run_program (char *solution_exe_file, char *target_exe_file, char *input, int timeout) {
+    char *solution_buf;
+    char *target_buf;
+
+    int solution_input_pipe[2];
+    int solution_runtime_pipe[2];
+
+    int target_input_pipe[2];
+    int target_runtime_pipe[2];
+
+    if (pipe(solution_input_pipe) == -1) {
+        fprintf(stderr, "pipe failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pipe(solution_runtime_pipe) == -1) {
+        fprintf(stderr, "pipe failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pipe(target_input_pipe) == -1) {
+        fprintf(stderr, "pipe failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pipe(target_runtime_pipe) == -1) {
+        fprintf(stderr, "pipe failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // execute the solution process
+    pid_t solution_pid = fork();
+    if (solution_pid < 0) {
+        fprintf(stderr, "fork failed\n");
+        exit(EXIT_FAILURE);
+    } else if (solution_pid == 0) {
+        close(solution_runtime_pipe[0]);
+        dup2(solution_runtime_pipe[1], STDOUT_FILENO);
+
+        close(solution_input_pipe[1]);
+        dup2(solution_input_pipe[0], STDIN_FILENO);
+
+        execv(solution_exe_file, NULL);
+
+        fprintf(stderr, "execv failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // clock time
+    struct timespec *timer = (struct timespec *) malloc(sizeof(struct timespec));
+
+    if (clock_gettime(CLOCK_REALTIME, timer) == -1) {
+        fprintf(stderr, "clock_gettime() failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // execute the target process
+    pid_t target_pid = fork();
+    if (target_pid < 0) {
+        fprintf(stderr, "fork failed\n");
+        exit(EXIT_FAILURE);
+    } else if (target_pid == 0) {
+        close(target_runtime_pipe[0]);
+        dup2(target_runtime_pipe[1], STDOUT_FILENO);
+
+        close(target_input_pipe[1]);
+        dup2(target_input_pipe[0], STDIN_FILENO);
+
+        execv(target_exe_file, NULL);
+
+        fprintf(stderr, "execv failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    close(solution_runtime_pipe[1]);
+    close(solution_input_pipe[0]);
+    close(target_runtime_pipe[1]);
+    close(target_input_pipe[0]);
+
+    write(solution_input_pipe[1], input, strlen(input));
+    write(target_input_pipe[1], input, strlen(input));
+
+    int status;
+
+    waitpid(target_pid, &status, 0);
+
+    if (!WIFEXITED(status)) {
+        return 2;
+    }
+
+    timer = time_execution(timer);
+
+    waitpid(solution_pid, &status, 0);
+
+    solution_buf = (char *) malloc(sizeof(char) * BUFSIZ);
+    int buf_len = read(solution_runtime_pipe[0], solution_buf, BUFSIZ);
+    
+    if (buf_len != 0) {
+        solution_buf[buf_len] = '\0';
+    }
+
+    target_buf = (char *) malloc(sizeof(char) * BUFSIZ);
+    buf_len = read(target_runtime_pipe[0], target_buf, BUFSIZ);
+    
+    if (buf_len != 0) {
+        target_buf[buf_len] = '\0';
+    }
+
+    printf("%s\n", solution_buf);
+    printf("%s\n", target_buf);
+
+    if (strcmp(solution_buf, target_buf) == 0) {
+        return 0;
+    } else {
+        return 1;
+    }
+
+    free(solution_buf);
+    free(target_buf);
+}
+
+char *read_file_contents(char *filename) {
     FILE *fp = fopen(filename, "r");
 
     if (fp == NULL) {
